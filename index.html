@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>문항별 자동재생 플레이어</title>
+  <style>
+    :root { --bg:#0b0f14; --card:#121821; --muted:#8aa0b2; --text:#e7f0f7; --accent:#6bd1ff; --accent2:#9bffb3; }
+    html,body{height:100%}
+    body{margin:0;background:linear-gradient(180deg,#0b0f14,#0e141b);color:var(--text);font:16px/1.5 system-ui, -apple-system, Segoe UI, Roboto, "Noto Sans KR", Helvetica, Arial}
+    .wrap{max-width:960px;margin:24px auto;padding:16px}
+    .card{background:var(--card);border:1px solid #1e2835;border-radius:16px;box-shadow:0 8px 24px rgba(0,0,0,.35)}
+    .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+    .hdr{padding:16px 20px;border-bottom:1px solid #1e2835}
+    .hdr h1{margin:0;font-size:20px}
+    .body{padding:16px 20px}
+    select, button, input[type="checkbox"]{accent-color:var(--accent)}
+    select,button{background:#0f1620;color:var(--text);border:1px solid #283243;border-radius:12px;padding:10px 12px}
+    button:hover{border-color:#3a4a62}
+    button.primary{background:linear-gradient(180deg,#10283a,#0f1e2b);border-color:#355875}
+    button[disabled]{opacity:.5;cursor:not-allowed}
+    .qgrid{display:grid;grid-template-columns:repeat(9,minmax(0,1fr));gap:8px;margin-top:12px}
+    .qbtn{padding:10px 0;text-align:center;border-radius:12px;border:1px solid #2a3647;background:#0e1620;color:#cfe2f1;cursor:pointer}
+    .qbtn.active{background:linear-gradient(180deg,#15314a,#142539);border-color:#4c7aa0;color:#fff;box-shadow:0 0 0 2px rgba(107,209,255,.25) inset}
+    .muted{color:var(--muted)}
+    .chip{display:inline-flex;gap:8px;align-items:center;border:1px solid #2b3a4f;background:#0f1722;border-radius:999px;padding:8px 12px}
+    .spacer{flex:1}
+    .footer{padding:14px 20px;border-top:1px solid #1e2835;color:#a7b8c7}
+    audio{width:100%;height:44px;border-radius:12px;background:#0e1620}
+    .note{font-size:13px;color:#98a9ba}
+  </style>
+  <!--
+    ========================= 설정(필수) =========================
+    1) 파일 규칙을 하나로 통일하면 680개 파일을 목록에 따로 쓰지 않고도 자동으로 재생할 수 있습니다.
+       예) /audio/lesson01/q01.mp3, /audio/lesson01/q02.mp3, ... /audio/lesson40/q17.mp3
+
+    2) 아래 CONFIG에서 LESSONS, QUESTIONS, BASE_URL, EXT, 그리고 urlFor()만 수정하세요.
+
+    3) Google Drive를 그대로 오디오 경로로 쓰려면 '직접 다운로드 링크(uc?export=download&id=...)'가 필요하고
+       CORS/트래픽 제한이 생길 수 있습니다. 간단/안정하게 하려면 GitHub Pages, Netlify 등에 mp3를 두세요.
+  -->
+  <script>
+    // ===== CONFIG =====
+    const CONFIG = {
+      LESSONS: 40,          // 강의 수
+      QUESTIONS: 17,        // 강의당 문항 수
+      BASE_URL: './audio',  // mp3가 놓인 폴더 (같은 저장소에 audio/lesson01/q01.mp3 형태로 올리기)
+      EXT: 'mp3',           // 파일 확장자
+      // 파일 경로 규칙 만들기
+      urlFor(lesson, q){
+        const L = String(lesson).padStart(2,'0');
+        const Q = String(q).padStart(2,'0');
+        // 결과 예: ./audio/lesson01/q03.mp3
+        return `${this.BASE_URL}/lesson${L}/q${Q}.${this.EXT}`;
+      },
+      // 재생 종료 시 다음 강으로 자동 이동 여부(기본: true)
+      AUTO_NEXT_LESSON: true
+    };
+  </script>
+</head>
+<body>
+  <div class="wrap card">
+    <div class="hdr">
+      <h1>문항별 자동재생 플레이어</h1>
+      <div class="note">파일명 규칙만 맞추면 자동으로 1강 1번부터 40강 17번까지 이어서 재생합니다.</div>
+    </div>
+    <div class="body">
+      <div class="row" style="gap:10px 12px">
+        <label>강 선택
+          <select id="lessonSel"></select>
+        </label>
+        <label>문항 선택
+          <select id="questionSel"></select>
+        </label>
+        <button id="prevBtn" title="이전 문항(←)">← 이전</button>
+        <button id="nextBtn" class="primary" title="다음 문항(→)">다음 →</button>
+        <div class="spacer"></div>
+        <label class="chip"><input type="checkbox" id="autoNext" checked> 다음 문항 자동재생</label>
+        <label class="chip"><input type="checkbox" id="autoNextLesson"> 다음 강으로 이어듣기</label>
+      </div>
+
+      <div style="margin:14px 0 8px" class="muted">현재 재생: <span id="nowPlaying">-</span></div>
+      <audio id="player" controls preload="none" controlsList="nodownload noplaybackrate"></audio>
+
+      <div class="qgrid" id="qGrid" aria-label="문항 목록"></div>
+
+      <p class="note" style="margin-top:14px">
+        • 키보드 단축키: ←/→ 문항 이동, Space 재생/일시정지<br>
+        • 파일이 없거나 접근이 막힌 경우 자동으로 다음 문항으로 넘어갑니다.
+      </p>
+    </div>
+    <div class="footer">
+      © 문항별 플레이어 · 단일 HTML로 배포 가능
+    </div>
+  </div>
+
+  <script>
+    // 상태
+    let curL = 1, curQ = 1;
+
+    const els = {
+      lessonSel: document.getElementById('lessonSel'),
+      questionSel: document.getElementById('questionSel'),
+      qGrid: document.getElementById('qGrid'),
+      player: document.getElementById('player'),
+      nowPlaying: document.getElementById('nowPlaying'),
+      prevBtn: document.getElementById('prevBtn'),
+      nextBtn: document.getElementById('nextBtn'),
+      autoNext: document.getElementById('autoNext'),
+      autoNextLesson: document.getElementById('autoNextLesson')
+    };
+
+    // 초기화: 드롭다운 & 그리드 구성
+    function initUI(){
+      // 강
+      for(let l=1;l<=CONFIG.LESSONS;l++){
+        const opt=document.createElement('option');
+        opt.value=l; opt.textContent=`${l}강`;
+        els.lessonSel.appendChild(opt);
+      }
+      // 문항
+      for(let q=1;q<=CONFIG.QUESTIONS;q++){
+        const opt=document.createElement('option');
+        opt.value=q; opt.textContent=`${q}번`;
+        els.questionSel.appendChild(opt);
+      }
+      // 문항 버튼 그리드
+      renderQGrid();
+
+      // 옵션 기본값
+      els.autoNext.checked = true;
+      els.autoNextLesson.checked = CONFIG.AUTO_NEXT_LESSON;
+
+      // 이벤트
+      els.lessonSel.addEventListener('change',()=>{ setLesson(+els.lessonSel.value, 1, true); });
+      els.questionSel.addEventListener('change',()=>{ setQuestion(+els.questionSel.value, true); });
+      els.prevBtn.addEventListener('click', prevQuestion);
+      els.nextBtn.addEventListener('click', nextQuestion);
+
+      els.player.addEventListener('ended', ()=>{ if(els.autoNext.checked) nextQuestion(); });
+      els.player.addEventListener('error', handleAudioError);
+
+      window.addEventListener('keydown', (e)=>{
+        if(e.target.closest('input,select,textarea')) return; // 폼 포커스 시 무시
+        if(e.key==='ArrowLeft'){ e.preventDefault(); prevQuestion(); }
+        if(e.key==='ArrowRight'){ e.preventDefault(); nextQuestion(); }
+        if(e.code==='Space'){ e.preventDefault(); togglePlay(); }
+      });
+
+      // 시작
+      setLesson(1,1,false);
+    }
+
+    function renderQGrid(){
+      els.qGrid.innerHTML='';
+      for(let q=1;q<=CONFIG.QUESTIONS;q++){
+        const b=document.createElement('button');
+        b.className='qbtn';
+        b.textContent=`${q}`;
+        b.dataset.q=q;
+        b.addEventListener('click',()=> setQuestion(q, true));
+        els.qGrid.appendChild(b);
+      }
+      activateQBtn();
+    }
+
+    function activateQBtn(){
+      [...els.qGrid.children].forEach(btn=>{
+        btn.classList.toggle('active', +btn.dataset.q===curQ);
+      });
+    }
+
+    function setLesson(lesson, question=1, autoplay=false){
+      curL = clamp(lesson,1,CONFIG.LESSONS);
+      els.lessonSel.value = String(curL);
+      renderQGrid();
+      setQuestion(question, autoplay);
+    }
+
+    function setQuestion(question, autoplay=false){
+      curQ = clamp(question,1,CONFIG.QUESTIONS);
+      els.questionSel.value = String(curQ);
+      activateQBtn();
+      loadCurrent(autoplay);
+    }
+
+    function loadCurrent(autoplay=false){
+      const src = CONFIG.urlFor(curL, curQ);
+      els.player.src = src;
+      els.nowPlaying.textContent = `${curL}강 ${curQ}번`;
+      if(autoplay) els.player.play().catch(()=>{});
+    }
+
+    function prevQuestion(){
+      if(curQ>1){ setQuestion(curQ-1, true); }
+      else if(curL>1){ setLesson(curL-1, CONFIG.QUESTIONS, true); }
+    }
+
+    function nextQuestion(){
+      if(curQ<CONFIG.QUESTIONS){ setQuestion(curQ+1, true); }
+      else {
+        if(els.autoNextLesson.checked){
+          if(curL<CONFIG.LESSONS) setLesson(curL+1, 1, true);
+        }
+      }
+    }
+
+    function togglePlay(){
+      if(els.player.paused) els.player.play(); else els.player.pause();
+    }
+
+    function handleAudioError(){
+      console.warn('오디오 로드 실패:', els.player.src);
+      // 파일이 없거나 접근 거부되면 800ms 뒤 다음 문항으로 시도
+      setTimeout(()=>{
+        if(els.autoNext.checked) nextQuestion();
+      }, 800);
+    }
+
+    function clamp(n,min,max){ return Math.max(min, Math.min(max, n)); }
+
+    // 부드럽게 로드
+    document.addEventListener('DOMContentLoaded', initUI);
+  </script>
+</body>
+</html>
